@@ -4,9 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>DRAM Semiconductor Index</title>
-
-  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
-
+  <!-- Version pinnée pour éviter une cassure silencieuse comme la v4→v5 -->
+  <script src="https://unpkg.com/lightweight-charts@5.0.7/dist/lightweight-charts.standalone.production.js"></script>
   <style>
     body {
       margin: 0;
@@ -14,23 +13,19 @@
       color: white;
       font-family: Arial, sans-serif;
     }
-
     .container {
       width: 100%;
       max-width: 1400px;
       margin: auto;
       padding: 20px;
     }
-
     h1 {
       margin-bottom: 20px;
       font-size: 28px;
     }
-
     #chart {
       height: 700px;
     }
-
     .footer {
       margin-top: 20px;
       opacity: 0.6;
@@ -39,75 +34,69 @@
   </style>
 </head>
 <body>
-
-<div class="container">
-  <h1>Semiconductor DRAM Stock Index</h1>
-  <div id="chart"></div>
-  <div class="footer">
-    Source: MacroMicro
+  <div class="container">
+    <h1>Semiconductor DRAM Stock Index</h1>
+    <div id="chart"></div>
+    <div class="footer">
+      Source: MacroMicro
+    </div>
   </div>
-</div>
 
-<script>
-async function loadData() {
-  const response = await fetch('history.json');
-  return await response.json();
-}
-
-async function main() {
-  const data = await loadData();
-
-  const chart = LightweightCharts.createChart(document.getElementById('chart'), {
-    layout: {
-      background: {
-        color: '#0f172a'
-      },
-      textColor: '#d1d5db'
-    },
-
-    grid: {
-      vertLines: {
-        color: '#1e293b'
-      },
-      horzLines: {
-        color: '#1e293b'
-      }
-    },
-
-    width: document.getElementById('chart').clientWidth,
-    height: 700,
-
-    crosshair: {
-      mode: LightweightCharts.CrosshairMode.Normal,
-    },
-
-    rightPriceScale: {
-      borderColor: '#334155'
-    },
-
-    timeScale: {
-      borderColor: '#334155',
-      timeVisible: true,
+  <script>
+    async function loadData() {
+      // Cache-buster pour récupérer la version la plus à jour après chaque commit
+      const response = await fetch('history.json?t=' + Date.now());
+      return await response.json();
     }
-  });
 
-  const lineSeries = chart.addLineSeries({
-    lineWidth: 3,
-    priceLineVisible: true,
-    lastValueVisible: true,
-  });
+    async function main() {
+      const data = await loadData();
+      const chartEl = document.getElementById('chart');
 
-  lineSeries.setData(data);
+      const chart = LightweightCharts.createChart(chartEl, {
+        layout: {
+          background: { color: '#0f172a' },
+          textColor: '#d1d5db'
+        },
+        grid: {
+          vertLines: { color: '#1e293b' },
+          horzLines: { color: '#1e293b' }
+        },
+        width: chartEl.clientWidth,
+        height: 700,
+        crosshair: {
+          mode: LightweightCharts.CrosshairMode.Normal,
+        },
+        rightPriceScale: {
+          borderColor: '#334155'
+        },
+        timeScale: {
+          borderColor: '#334155',
+          timeVisible: true,
+        }
+      });
 
-  window.addEventListener('resize', () => {
-    chart.applyOptions({
-      width: document.getElementById('chart').clientWidth
+      // ⚠️ API lightweight-charts v5 :
+      //   chart.addLineSeries(...)  → SUPPRIMÉ
+      //   chart.addSeries(LightweightCharts.LineSeries, {...})  → ✅
+      const lineSeries = chart.addSeries(LightweightCharts.LineSeries, {
+        lineWidth: 3,
+        priceLineVisible: true,
+        lastValueVisible: true,
+      });
+
+      lineSeries.setData(data);
+      chart.timeScale().fitContent();
+
+      window.addEventListener('resize', () => {
+        chart.applyOptions({ width: chartEl.clientWidth });
+      });
+    }
+
+    main().catch(err => {
+      console.error(err);
+      document.getElementById('chart').textContent = 'Erreur de chargement : ' + err.message;
     });
-  });
-}
-
-main();
-</script>
-
+  </script>
 </body>
 </html>
