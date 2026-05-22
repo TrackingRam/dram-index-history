@@ -3,90 +3,560 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DRAM Semiconductor Index</title>
-  <!-- Version pinnée pour éviter une cassure silencieuse comme la v4→v5 -->
+  <title>DRAM Stock Index — Tracker</title>
   <script src="https://unpkg.com/lightweight-charts@5.0.7/dist/lightweight-charts.standalone.production.js"></script>
   <style>
-    body {
+    :root {
+      --bg-1: #0b0820;
+      --bg-2: #1a0f3d;
+      --bg-3: #261a5e;
+      --glass-bg: rgba(255, 255, 255, 0.06);
+      --glass-border: rgba(255, 255, 255, 0.12);
+      --glass-hover: rgba(255, 255, 255, 0.10);
+      --text-primary: #f5f6ff;
+      --text-secondary: rgba(245, 246, 255, 0.65);
+      --text-muted: rgba(245, 246, 255, 0.45);
+      --accent: #7c5cff;
+      --accent-2: #22d3ee;
+      --up: #34d399;
+      --down: #f87171;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
       margin: 0;
-      background: #0f172a;
-      color: white;
-      font-family: Arial, sans-serif;
+      padding: 0;
+      min-height: 100%;
+      color: var(--text-primary);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: radial-gradient(at 20% 0%, var(--bg-3) 0px, transparent 50%),
+                  radial-gradient(at 80% 100%, #5b2bbf 0px, transparent 55%),
+                  linear-gradient(135deg, var(--bg-1) 0%, var(--bg-2) 100%);
+      background-attachment: fixed;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
     }
+
+    /* Blobs colorés en arrière-plan */
+    body::before, body::after {
+      content: '';
+      position: fixed;
+      border-radius: 50%;
+      filter: blur(80px);
+      opacity: 0.5;
+      z-index: 0;
+      pointer-events: none;
+    }
+    body::before {
+      width: 500px; height: 500px;
+      background: #7c5cff;
+      top: -150px; left: -100px;
+    }
+    body::after {
+      width: 600px; height: 600px;
+      background: #22d3ee;
+      bottom: -200px; right: -150px;
+      opacity: 0.25;
+    }
+
     .container {
-      width: 100%;
+      position: relative;
+      z-index: 1;
       max-width: 1400px;
-      margin: auto;
-      padding: 20px;
+      margin: 0 auto;
+      padding: 32px 24px 48px;
     }
-    h1 {
-      margin-bottom: 20px;
+
+    /* Header */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+    .title-block h1 {
+      margin: 0;
       font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .title-block .subtitle {
+      margin-top: 4px;
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+    .last-update {
+      font-size: 12px;
+      color: var(--text-muted);
+      padding: 8px 14px;
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: 999px;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+    }
+    .last-update .dot {
+      display: inline-block;
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--up);
+      box-shadow: 0 0 8px var(--up);
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+
+    /* Hero card with current value */
+    .hero {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .card {
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: 20px;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      padding: 22px 24px;
+      transition: background 0.2s, transform 0.2s;
+    }
+    .card:hover { background: var(--glass-hover); }
+
+    .hero-card {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 28px 32px;
+    }
+    .hero-card .label {
+      font-size: 12px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+    .hero-value {
+      font-size: 56px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1.05;
+      font-variant-numeric: tabular-nums;
+      background: linear-gradient(135deg, #fff 0%, #c4b5fd 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .hero-meta {
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 4px;
+    }
+    .hero-meta .date {
+      font-size: 14px;
+      color: var(--text-secondary);
+    }
+
+    /* Stats grid */
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+    .stat-card {
+      padding: 18px 20px;
+    }
+    .stat-card .stat-label {
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      font-weight: 500;
+      margin-bottom: 8px;
+    }
+    .stat-card .stat-delta {
+      font-size: 22px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.02em;
+    }
+    .stat-card .stat-pct {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-top: 6px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+    .stat-card .ref-date {
+      display: block;
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .up { color: var(--up); }
+    .down { color: var(--down); }
+    .pct-up { background: rgba(52, 211, 153, 0.15); color: var(--up); }
+    .pct-down { background: rgba(248, 113, 113, 0.15); color: var(--down); }
+    .pct-flat { background: rgba(255, 255, 255, 0.08); color: var(--text-secondary); }
+
+    /* Chart toolbar */
+    .toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .toolbar h2 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      letter-spacing: -0.01em;
+    }
+    .range-group {
+      display: inline-flex;
+      gap: 4px;
+      padding: 4px;
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: 999px;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+    }
+    .range-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 7px 16px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-family: inherit;
+      letter-spacing: 0.02em;
+    }
+    .range-btn:hover {
+      color: var(--text-primary);
+      background: rgba(255, 255, 255, 0.06);
+    }
+    .range-btn.active {
+      background: linear-gradient(135deg, var(--accent) 0%, #5436c7 100%);
+      color: #fff;
+      box-shadow: 0 4px 16px rgba(124, 92, 255, 0.4);
+    }
+
+    /* Chart container */
+    .chart-card {
+      padding: 18px 8px 8px;
+      position: relative;
     }
     #chart {
-      height: 700px;
+      height: 540px;
+      width: 100%;
     }
+
+    /* Custom tooltip */
+    .tooltip {
+      position: absolute;
+      display: none;
+      pointer-events: none;
+      background: rgba(15, 12, 41, 0.92);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--glass-border);
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-size: 13px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+      z-index: 10;
+      min-width: 160px;
+    }
+    .tooltip .tt-date {
+      font-size: 11px;
+      color: var(--text-muted);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+    .tooltip .tt-value {
+      font-size: 18px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: var(--text-primary);
+    }
+
     .footer {
-      margin-top: 20px;
-      opacity: 0.6;
-      font-size: 14px;
+      margin-top: 28px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .footer a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      border-bottom: 1px dashed var(--text-muted);
+    }
+
+    @media (max-width: 640px) {
+      .hero-value { font-size: 42px; }
+      .container { padding: 20px 14px 36px; }
+      #chart { height: 420px; }
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>Semiconductor DRAM Stock Index</h1>
-    <div id="chart"></div>
+    <div class="header">
+      <div class="title-block">
+        <h1>DRAM Stock Index</h1>
+        <div class="subtitle">Semiconductor — Tracking quotidien</div>
+      </div>
+      <div class="last-update" id="last-update"><span class="dot"></span>Chargement…</div>
+    </div>
+
+    <div class="hero">
+      <div class="card hero-card">
+        <div class="label">Valeur actuelle</div>
+        <div class="hero-value" id="hero-value">—</div>
+        <div class="hero-meta">
+          <span class="date" id="hero-date">—</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="stats" id="stats">
+      <!-- généré dynamiquement -->
+    </div>
+
+    <div class="toolbar">
+      <h2>Évolution</h2>
+      <div class="range-group" id="range-group">
+        <button class="range-btn" data-range="1M">1M</button>
+        <button class="range-btn" data-range="3M">3M</button>
+        <button class="range-btn" data-range="1Y">1A</button>
+        <button class="range-btn active" data-range="ALL">All</button>
+      </div>
+    </div>
+
+    <div class="card chart-card">
+      <div id="chart"></div>
+      <div class="tooltip" id="tooltip">
+        <div class="tt-date" id="tt-date"></div>
+        <div class="tt-value" id="tt-value"></div>
+      </div>
+    </div>
+
     <div class="footer">
-      Source: MacroMicro
+      Source : <a href="https://en.macromicro.me/series/2793/semiconductor-dram-stock-index" target="_blank" rel="noopener">MacroMicro</a> · Mis à jour quotidiennement
     </div>
   </div>
 
   <script>
+    // ---------- Helpers ----------
+    const fmtNumber = new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const fmtDateLong = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+    const fmtDateShort = new Intl.DateTimeFormat('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
+
+    function parseDate(t) { return new Date(t + 'T00:00:00Z'); }
+    function isoDate(d) { return d.toISOString().slice(0, 10); }
+
+    /**
+     * Cherche le point de référence pour une variation passée.
+     * Renvoie le dernier point AVANT ou ÉGAL à (last.time - offsetDays).
+     */
+    function findRefPoint(data, offsetDays) {
+      if (data.length < 2) return null;
+      const last = data[data.length - 1];
+      const target = parseDate(last.time);
+      target.setUTCDate(target.getUTCDate() - offsetDays);
+      let ref = null;
+      for (let i = data.length - 2; i >= 0; i--) {
+        if (parseDate(data[i].time) <= target) { ref = data[i]; break; }
+      }
+      // Si aucun point assez ancien, on prend juste le tout premier point
+      if (!ref) ref = data[0];
+      return ref;
+    }
+
+    function refPrevPoint(data) {
+      return data.length >= 2 ? data[data.length - 2] : null;
+    }
+
+    function deltaInfo(last, ref) {
+      if (!ref) return null;
+      const delta = last.value - ref.value;
+      const pct = (delta / ref.value) * 100;
+      return { delta, pct, ref };
+    }
+
+    function classFor(d) {
+      if (!d) return 'pct-flat';
+      if (d.delta > 0) return 'pct-up';
+      if (d.delta < 0) return 'pct-down';
+      return 'pct-flat';
+    }
+    function arrow(d) {
+      if (!d) return '';
+      if (d.delta > 0) return '▲';
+      if (d.delta < 0) return '▼';
+      return '◆';
+    }
+
+    function renderStatCard(label, last, ref) {
+      const info = deltaInfo(last, ref);
+      const cls = classFor(info);
+      const sign = info && info.delta > 0 ? '+' : '';
+      const deltaStr = info ? `${sign}${fmtNumber.format(info.delta)}` : '—';
+      const pctStr = info ? `${sign}${fmtNumber.format(info.pct)}%` : '—';
+      const refDateStr = ref ? `vs ${fmtDateShort.format(parseDate(ref.time))}` : '—';
+      return `
+        <div class="card stat-card">
+          <div class="stat-label">${label}</div>
+          <div class="stat-delta ${info && info.delta < 0 ? 'down' : info && info.delta > 0 ? 'up' : ''}">${deltaStr}</div>
+          <span class="stat-pct ${cls}">${arrow(info)} ${pctStr}</span>
+          <span class="ref-date">${refDateStr}</span>
+        </div>
+      `;
+    }
+
+    // ---------- Main ----------
     async function loadData() {
-      // Cache-buster pour récupérer la version la plus à jour après chaque commit
-      const response = await fetch('history.json?t=' + Date.now());
-      return await response.json();
+      const r = await fetch('history.json?t=' + Date.now());
+      if (!r.ok) throw new Error('Impossible de charger history.json');
+      return await r.json();
+    }
+
+    let chart, lineSeries, allData;
+
+    function applyRange(range) {
+      if (!chart || !allData.length) return;
+      const last = allData[allData.length - 1];
+      const lastDate = parseDate(last.time);
+      let fromDate = null;
+      if (range === '1M') fromDate = new Date(Date.UTC(lastDate.getUTCFullYear(), lastDate.getUTCMonth() - 1, lastDate.getUTCDate()));
+      else if (range === '3M') fromDate = new Date(Date.UTC(lastDate.getUTCFullYear(), lastDate.getUTCMonth() - 3, lastDate.getUTCDate()));
+      else if (range === '1Y') fromDate = new Date(Date.UTC(lastDate.getUTCFullYear() - 1, lastDate.getUTCMonth(), lastDate.getUTCDate()));
+
+      if (fromDate) {
+        // S'assurer que la borne basse existe dans la série (sinon setVisibleRange peut clamper bizarrement)
+        const fromTime = isoDate(fromDate) < allData[0].time ? allData[0].time : isoDate(fromDate);
+        chart.timeScale().setVisibleRange({ from: fromTime, to: last.time });
+      } else {
+        chart.timeScale().fitContent();
+      }
+
+      // active button
+      document.querySelectorAll('.range-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.range === range);
+      });
     }
 
     async function main() {
-      const data = await loadData();
-      const chartEl = document.getElementById('chart');
+      allData = await loadData();
+      if (!Array.isArray(allData) || !allData.length) throw new Error('history.json vide');
 
-      const chart = LightweightCharts.createChart(chartEl, {
+      const last = allData[allData.length - 1];
+
+      // Hero
+      document.getElementById('hero-value').textContent = fmtNumber.format(last.value);
+      document.getElementById('hero-date').textContent = fmtDateLong.format(parseDate(last.time));
+      document.getElementById('last-update').innerHTML =
+        `<span class="dot"></span>Dernière màj : ${fmtDateShort.format(parseDate(last.time))}`;
+
+      // Stats
+      const statsHtml = [
+        renderStatCard('Variation J-1', last, refPrevPoint(allData)),
+        renderStatCard('Variation J-7', last, findRefPoint(allData, 7)),
+        renderStatCard('Variation M-1', last, findRefPoint(allData, 30)),
+        renderStatCard('Variation M-3', last, findRefPoint(allData, 90)),
+      ].join('');
+      document.getElementById('stats').innerHTML = statsHtml;
+
+      // Chart
+      const chartEl = document.getElementById('chart');
+      chart = LightweightCharts.createChart(chartEl, {
         layout: {
-          background: { color: '#0f172a' },
-          textColor: '#d1d5db'
+          background: { color: 'transparent' },
+          textColor: 'rgba(245, 246, 255, 0.65)',
+          fontFamily: "'Inter', sans-serif",
         },
         grid: {
-          vertLines: { color: '#1e293b' },
-          horzLines: { color: '#1e293b' }
-        },
-        width: chartEl.clientWidth,
-        height: 700,
-        crosshair: {
-          mode: LightweightCharts.CrosshairMode.Normal,
+          vertLines: { color: 'rgba(255, 255, 255, 0.04)' },
+          horzLines: { color: 'rgba(255, 255, 255, 0.05)' },
         },
         rightPriceScale: {
-          borderColor: '#334155'
+          borderColor: 'rgba(255, 255, 255, 0.08)',
         },
         timeScale: {
-          borderColor: '#334155',
+          borderColor: 'rgba(255, 255, 255, 0.08)',
           timeVisible: true,
-        }
+        },
+        crosshair: {
+          mode: LightweightCharts.CrosshairMode.Magnet,
+          vertLine: { color: 'rgba(124, 92, 255, 0.6)', width: 1, style: 0, labelBackgroundColor: '#7c5cff' },
+          horzLine: { color: 'rgba(124, 92, 255, 0.6)', width: 1, style: 3, labelBackgroundColor: '#7c5cff' },
+        },
+        width: chartEl.clientWidth,
+        height: 540,
+        autoSize: false,
       });
 
-      // ⚠️ API lightweight-charts v5 :
-      //   chart.addLineSeries(...)  → SUPPRIMÉ
-      //   chart.addSeries(LightweightCharts.LineSeries, {...})  → ✅
-      const lineSeries = chart.addSeries(LightweightCharts.LineSeries, {
+      lineSeries = chart.addSeries(LightweightCharts.AreaSeries, {
+        lineColor: '#7c5cff',
         lineWidth: 3,
+        topColor: 'rgba(124, 92, 255, 0.4)',
+        bottomColor: 'rgba(124, 92, 255, 0.02)',
         priceLineVisible: true,
         lastValueVisible: true,
+        priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+      });
+      lineSeries.setData(allData);
+      chart.timeScale().fitContent();
+
+      // Tooltip
+      const tooltipEl = document.getElementById('tooltip');
+      const tDateEl = document.getElementById('tt-date');
+      const tValEl = document.getElementById('tt-value');
+      chart.subscribeCrosshairMove(param => {
+        if (!param.time || !param.point || param.point.x < 0 || param.point.x > chartEl.clientWidth) {
+          tooltipEl.style.display = 'none';
+          return;
+        }
+        const sd = param.seriesData.get(lineSeries);
+        if (!sd) { tooltipEl.style.display = 'none'; return; }
+        const v = sd.value !== undefined ? sd.value : sd.close;
+        tDateEl.textContent = fmtDateLong.format(parseDate(param.time));
+        tValEl.textContent = fmtNumber.format(v);
+        tooltipEl.style.display = 'block';
+
+        const w = tooltipEl.offsetWidth;
+        const h = tooltipEl.offsetHeight;
+        let x = param.point.x + 20;
+        let y = param.point.y - h - 12;
+        if (x + w > chartEl.clientWidth) x = param.point.x - w - 20;
+        if (y < 0) y = param.point.y + 20;
+        tooltipEl.style.left = x + 'px';
+        tooltipEl.style.top = y + 'px';
       });
 
-      lineSeries.setData(data);
-      chart.timeScale().fitContent();
+      // Range buttons
+      document.querySelectorAll('.range-btn').forEach(btn => {
+        btn.addEventListener('click', () => applyRange(btn.dataset.range));
+      });
+      applyRange('ALL');
 
       window.addEventListener('resize', () => {
         chart.applyOptions({ width: chartEl.clientWidth });
@@ -95,7 +565,8 @@
 
     main().catch(err => {
       console.error(err);
-      document.getElementById('chart').textContent = 'Erreur de chargement : ' + err.message;
+      document.getElementById('hero-value').textContent = 'Erreur';
+      document.getElementById('hero-date').textContent = err.message;
     });
   </script>
 </body>
