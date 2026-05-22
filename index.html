@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DRAM Semiconductor Index</title>
+
+  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+
+  <style>
+    body {
+      margin: 0;
+      background: #0f172a;
+      color: white;
+      font-family: Arial, sans-serif;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 1400px;
+      margin: auto;
+      padding: 20px;
+    }
+
+    h1 {
+      margin-bottom: 20px;
+      font-size: 28px;
+    }
+
+    #chart {
+      height: 700px;
+    }
+
+    .footer {
+      margin-top: 20px;
+      opacity: 0.6;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1>Semiconductor DRAM Stock Index</h1>
+  <div id="chart"></div>
+  <div class="footer">
+    Source: MacroMicro
+  </div>
+</div>
+
+<script>
+async function loadData() {
+  const response = await fetch('history.json');
+  return await response.json();
+}
+
+async function main() {
+  const data = await loadData();
+
+  const chart = LightweightCharts.createChart(document.getElementById('chart'), {
+    layout: {
+      background: {
+        color: '#0f172a'
+      },
+      textColor: '#d1d5db'
+    },
+
+    grid: {
+      vertLines: {
+        color: '#1e293b'
+      },
+      horzLines: {
+        color: '#1e293b'
+      }
+    },
+
+    width: document.getElementById('chart').clientWidth,
+    height: 700,
+
+    crosshair: {
+      mode: LightweightCharts.CrosshairMode.Normal,
+    },
+
+    rightPriceScale: {
+      borderColor: '#334155'
+    },
+
+    timeScale: {
+      borderColor: '#334155',
+      timeVisible: true,
+    }
+  });
+
+  const lineSeries = chart.addLineSeries({
+    lineWidth: 3,
+    priceLineVisible: true,
+    lastValueVisible: true,
+  });
+
+  lineSeries.setData(data);
+
+  window.addEventListener('resize', () => {
+    chart.applyOptions({
+      width: document.getElementById('chart').clientWidth
+    });
+  });
+}
+
+main();
+</script>
+
+</body>
+</html>
