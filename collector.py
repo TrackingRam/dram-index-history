@@ -1,13 +1,30 @@
 import json
+import logging
 import os
-import re
 import subprocess
+import sys
+import traceback
 from datetime import datetime, timezone
 
 from playwright.sync_api import sync_playwright
 
+# --- Chemins absolus : le script est portable, fonctionne depuis n'importe quel cwd ---
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+JSON_FILE = os.path.join(SCRIPT_DIR, "history.json")
+LOG_FILE = os.path.join(SCRIPT_DIR, "collector.log")
+
 URL = "https://en.macromicro.me/series/2793/semiconductor-dram-stock-index"
-JSON_FILE = "history.json"
+
+# --- Logger qui écrit dans un fichier ET sur stdout/stderr ---
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_FILE, encoding="utf-8"),
+        logging.StreamHandler(sys.stdout),
+    ],
+)
+log = logging.getLogger("collector")
 
 
 def load_history():
@@ -26,11 +43,9 @@ def fetch_value():
     """
     Récupère le dernier point (date, valeur) du graphique DRAM Stock Index.
 
-    Stratégie (du plus fiable au plus dégradé) :
-      1. Lire directement Highcharts.charts[0].series[0].data — c'est ce que
-         la page utilise en interne, et c'est la valeur avec sa précision
-         complète (ex: 9671.4083, pas l'affichage arrondi 9,671.41).
-      2. Fallback sur le sélecteur CSS de la "stat header" affichée.
+    Stratégie :
+      1. Lire Highcharts.charts[0].series[0].data — précision complète.
+      2. Fallback : sélecteur CSS .mm-cc-chart-stats-title .stat-val .val.
     """
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -47,7 +62,6 @@ def fetch_value():
         page = context.new_page()
         page.goto(URL, wait_until="networkidle", timeout=120000)
 
-        # Bannière cookies éventuelle
         try:
             accept = page.locator("button:has-text('Accept')")
             if accept.count() > 0:
@@ -55,7 +69,6 @@ def fetch_value():
         except Exception:
             pass
 
-        # Laisser Highcharts s'initialiser avec les données
         page.wait_for_function(
             "() => typeof Highcharts !== 'undefined' "
             "&& Highcharts.charts "
@@ -64,7 +77,6 @@ def fetch_value():
             timeout=60000,
         )
 
-        # --- Source primaire : objet Highcharts (précision complète) ---
         last_point = page.evaluate(
             """() => {
                 const charts = (Highcharts.charts || []).filter(c => c);
@@ -79,7 +91,6 @@ def fetch_value():
             }"""
         )
 
-        # --- Fallback : sélecteur CSS de la valeur affichée ---
         if not last_point or last_point.get("y") is None:
             displayed = page.locator(
                 ".mm-cc-chart-stats-title .stat-val .val"
@@ -91,7 +102,6 @@ def fetch_value():
 
         browser.close()
 
-        # x est un timestamp ms UTC -> date YYYY-MM-DD
         ts_ms = last_point["x"]
         date_str = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
         value = float(last_point["y"])
@@ -102,28 +112,54 @@ def update_history(date_str, value):
     history = load_history()
     for item in history:
         if item["time"] == date_str:
+            if item["value"] == value:
+                log.info("Valeur déjà à jour pour %s = %s, rien à faire.", date_str, value)
+                return False
             item["value"] = value
             save_history(history)
-            return
+            log.info("Valeur du %s mise à jour : %s", date_str, value)
+            return True
     history.append({"time": date_str, "value": value})
     history.sort(key=lambda x: x["time"])
     save_history(history)
+    log.info("Nouvelle entrée ajoutée : %s = %s", date_str, value)
+    return True
 
 
 def git_push(date_str, value):
-    subprocess.run(["git", "add", "history.json"], check=True)
-    subprocess.run(
-        ["git", "commit", "-m", f"update DRAM index {date_str} {value}"],
-        check=False,
-    )
-    subprocess.run(["git", "push", "origin", "main"], check=True)
+    """git add/commit/push, toujours dans le bon dossier grâce à `-C SCRIPT_DIR`."""
+    def run(args):
+        log.info("$ %s", " ".join(args))
+        result = subprocess.run(args, capture_output=True, text=True)
+        if result.stdout:
+            log.info("stdout: %s", result.stdout.strip())
+        if result.stderr:
+            log.info("stderr: %s", result.stderr.strip())
+        return result.returncode
+
+    run(["git", "-C", SCRIPT_DIR, "add", "history.json"])
+    rc = run(["git", "-C", SCRIPT_DIR, "commit", "-m", f"update DRAM index {date_str} {value}"])
+    if rc != 0:
+        log.info("Rien à commiter (ou échec de commit) — on n'essaie pas de push.")
+        return
+    rc = run(["git", "-C", SCRIPT_DIR, "push", "origin", "main"])
+    if rc != 0:
+        log.error("Le push a échoué. Vérifier l'authentification git (clé SSH / token).")
 
 
 def main():
-    date_str, value = fetch_value()
-    print(f"Valeur collectée : {value}  (date publiée : {date_str})")
-    update_history(date_str, value)
-    git_push(date_str, value)
+    log.info("=== Démarrage collector (PID=%s, cwd=%s, script_dir=%s) ===",
+             os.getpid(), os.getcwd(), SCRIPT_DIR)
+    try:
+        date_str, value = fetch_value()
+        log.info("Valeur collectée : %s (date publiée : %s)", value, date_str)
+        changed = update_history(date_str, value)
+        if changed:
+            git_push(date_str, value)
+        log.info("=== Fin OK ===")
+    except Exception:
+        log.error("Erreur fatale :\n%s", traceback.format_exc())
+        sys.exit(1)
 
 
 if __name__ == "__main__":
