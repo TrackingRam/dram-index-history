@@ -434,10 +434,29 @@
     }
 
     // ---------- Main ----------
+    // Sources de history.json, par ordre de priorité.
+    //  - raw.githubusercontent.com : se rafraîchit ~1 min après chaque push,
+    //    indépendamment du build GitHub Pages (qui cache 10 min via son CDN).
+    //  - history.json relatif : fallback si raw.* est indisponible / bloqué.
+    const HISTORY_SOURCES = [
+      'https://raw.githubusercontent.com/TrackingRam/dram-index-history/main/history.json',
+      'history.json',
+    ];
+
     async function loadData() {
-      const r = await fetch('history.json?t=' + Date.now());
-      if (!r.ok) throw new Error('Impossible de charger history.json');
-      return await r.json();
+      let lastErr;
+      for (const base of HISTORY_SOURCES) {
+        try {
+          const url = base + (base.includes('?') ? '&' : '?') + 't=' + Date.now();
+          const r = await fetch(url, { cache: 'no-store' });
+          if (!r.ok) throw new Error('HTTP ' + r.status + ' sur ' + base);
+          return await r.json();
+        } catch (e) {
+          lastErr = e;
+          console.warn('Echec fetch ' + base + ' :', e);
+        }
+      }
+      throw new Error('Impossible de charger history.json — ' + (lastErr && lastErr.message));
     }
 
     let chart, lineSeries, allData;
