@@ -3,10 +3,11 @@ import logging
 import os
 import subprocess
 import sys
+import time
 import traceback
 from datetime import datetime, timezone
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 # --- Chemins absolus : le script est portable, fonctionne depuis n'importe quel cwd ---
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -39,13 +40,16 @@ def save_history(data):
         json.dump(data, f, indent=2)
 
 
-def fetch_value():
+def _fetch_value_once():
     """
-    Récupère le dernier point (date, valeur) du graphique DRAM Stock Index.
+    Une tentative de récupération du dernier point (date, valeur).
 
-    Stratégie :
-      1. Lire Highcharts.charts[0].series[0].data — précision complète.
-      2. Fallback : sélecteur CSS .mm-cc-chart-stats-title .stat-val .val.
+    On ne s'appuie PAS sur `wait_until='networkidle'` : MacroMicro garde des
+    requêtes background (analytics, polling) en permanence, donc le réseau
+    ne devient jamais idle et goto() finit en timeout.
+    À la place, on attend `domcontentloaded` (DOM prêt) puis on attend
+    explicitement que Highcharts ait chargé ses données — c'est la vraie
+    condition métier.
     """
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -60,52 +64,79 @@ def fetch_value():
             )
         )
         page = context.new_page()
-        page.goto(URL, wait_until="networkidle", timeout=120000)
-
         try:
-            accept = page.locator("button:has-text('Accept')")
-            if accept.count() > 0:
-                accept.first.click(timeout=3000)
-        except Exception:
-            pass
+            # DOM prêt suffit — la vraie attente se fait sur Highcharts ci-dessous
+            page.goto(URL, wait_until="domcontentloaded", timeout=60000)
 
-        page.wait_for_function(
-            "() => typeof Highcharts !== 'undefined' "
-            "&& Highcharts.charts "
-            "&& Highcharts.charts.some(c => c && c.series && c.series[0] "
-            "&& c.series[0].data && c.series[0].data.length > 0)",
-            timeout=60000,
-        )
+            try:
+                accept = page.locator("button:has-text('Accept')")
+                if accept.count() > 0:
+                    accept.first.click(timeout=3000)
+            except Exception:
+                pass
 
-        last_point = page.evaluate(
-            """() => {
-                const charts = (Highcharts.charts || []).filter(c => c);
-                for (const c of charts) {
-                    const s = c.series && c.series[0];
-                    if (s && s.data && s.data.length) {
-                        const p = s.data[s.data.length - 1];
-                        return { x: p.x, y: p.y };
+            # On attend que Highcharts ait été instancié ET qu'il ait des données
+            page.wait_for_function(
+                "() => typeof Highcharts !== 'undefined' "
+                "&& Highcharts.charts "
+                "&& Highcharts.charts.some(c => c && c.series && c.series[0] "
+                "&& c.series[0].data && c.series[0].data.length > 0)",
+                timeout=90000,
+            )
+
+            last_point = page.evaluate(
+                """() => {
+                    const charts = (Highcharts.charts || []).filter(c => c);
+                    for (const c of charts) {
+                        const s = c.series && c.series[0];
+                        if (s && s.data && s.data.length) {
+                            const p = s.data[s.data.length - 1];
+                            return { x: p.x, y: p.y };
+                        }
                     }
-                }
-                return null;
-            }"""
-        )
+                    return null;
+                }"""
+            )
 
-        if not last_point or last_point.get("y") is None:
-            displayed = page.locator(
-                ".mm-cc-chart-stats-title .stat-val .val"
-            ).first.inner_text(timeout=10000)
-            num = float(displayed.replace(",", "").strip())
-            date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            if not last_point or last_point.get("y") is None:
+                # Fallback CSS si Highcharts ne livre pas la donnée
+                displayed = page.locator(
+                    ".mm-cc-chart-stats-title .stat-val .val"
+                ).first.inner_text(timeout=10000)
+                num = float(displayed.replace(",", "").strip())
+                date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                return date_str, num
+
+            ts_ms = last_point["x"]
+            date_str = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+            value = float(last_point["y"])
+            return date_str, value
+        finally:
             browser.close()
-            return date_str, num
 
-        browser.close()
 
-        ts_ms = last_point["x"]
-        date_str = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
-        value = float(last_point["y"])
-        return date_str, value
+def fetch_value(max_attempts=3, backoff_seconds=15):
+    """
+    Wrapper avec retry : un blip réseau ou un coup de mou côté MacroMicro
+    ne doit pas faire échouer tout le run quand on a deux créneaux cron
+    par jour. Backoff linéaire entre les tentatives.
+    """
+    last_err = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            log.info("Tentative %d/%d de récupération…", attempt, max_attempts)
+            return _fetch_value_once()
+        except PlaywrightTimeoutError as e:
+            last_err = e
+            log.warning("Timeout Playwright (tentative %d) : %s", attempt, e)
+        except Exception as e:
+            last_err = e
+            log.warning("Erreur (tentative %d) : %s", attempt, e)
+        if attempt < max_attempts:
+            wait = backoff_seconds * attempt
+            log.info("Nouvelle tentative dans %ds…", wait)
+            time.sleep(wait)
+    raise RuntimeError(f"fetch_value: échec après {max_attempts} tentatives") from last_err
 
 
 def update_history(date_str, value):
